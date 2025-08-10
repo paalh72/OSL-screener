@@ -4,3 +4,4 @@ ta
 matplotlib
 pandas
 numpy
+requests
