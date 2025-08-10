@@ -3,16 +3,33 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import ta
-import time
+import requests
+import io
 import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="RSI Screener - Oslo Børs", layout="wide")
 
-# --- TICKERS FRA OSLO BØRS (eksempel-liste, kan utvides)
-oslo_tickers = [
-    "EQNR.OL", "NHY.OL", "MOWI.OL", "ORK.OL", "TEL.OL",
-    "KID.OL", "SALM.OL", "AKRBP.OL", "YAR.OL", "ODL.OL"
-]
+# --- Hent tickers automatisk fra Euronext
+@st.cache_data
+def hent_oslo_tickers():
+    url = "https://live.euronext.com/en/products/equities/list?mics=OSLO"
+    r = requests.get(url)
+    if r.status_code != 200:
+        st.error("Kunne ikke hente tickers fra Euronext, bruker fallback-liste.")
+        return ["EQNR.OL", "NHY.OL", "MOWI.OL", "ORK.OL", "TEL.OL"]
+
+    # Vi bruker en CSV fra Oslo Børs sin eksport-side
+    csv_url = "https://www.oslobors.no/ob_eng/obstat/download?reportType=share&format=csv"
+    r = requests.get(csv_url)
+    if r.status_code == 200:
+        df = pd.read_csv(io.StringIO(r.content.decode("utf-8")), sep=";")
+        tickers = [f"{t.strip()}.OL" for t in df["Ticker"].dropna().unique()]
+        return tickers
+    else:
+        st.warning("Bruker fallback-liste.")
+        return ["EQNR.OL", "NHY.OL", "MOWI.OL", "ORK.OL", "TEL.OL"]
+
+oslo_tickers = hent_oslo_tickers()
 
 st.title("📈 RSI Screener – Oslo Børs")
 st.markdown("Analyserer 5 års historikk for RSI-svinger mellom 20 og 70.")
@@ -34,7 +51,7 @@ for i, ticker in enumerate(oslo_tickers):
     status_text.text(f"Henter og analyserer {ticker} ...")
 
     try:
-        df = yf.download(ticker, period="5y", interval="1d")
+        df = yf.download(ticker, period="5y", interval="1d", progress=False)
         if df.empty:
             continue
 
@@ -49,7 +66,6 @@ for i, ticker in enumerate(oslo_tickers):
         df['RSI'] = rsi
 
         # Finn svinger mellom RSI 20 og 70
-        swing_points = []
         last_rsi20_price = None
         successes = 0
         total_swings = 0
@@ -86,10 +102,9 @@ if results:
     st.subheader("Aksjer som matcher kriteriene")
     st.dataframe(df_results)
 
-    # Klikk for å se graf
     ticker_choice = st.selectbox("Velg aksje for graf", df_results["Ticker"])
     if ticker_choice:
-        df = yf.download(ticker_choice, period="5y", interval="1d")
+        df = yf.download(ticker_choice, period="5y", interval="1d", progress=False)
         df['RSI'] = ta.momentum.RSIIndicator(df['Close'], window=14).rsi()
 
         fig, ax1 = plt.subplots(figsize=(12,6))
@@ -105,7 +120,6 @@ if results:
 
         st.pyplot(fig)
 
-        # RSI-plot
         fig2, ax3 = plt.subplots(figsize=(12,3))
         ax3.plot(df.index, df['RSI'], label="RSI", color="purple")
         ax3.axhline(70, color="red", linestyle="--")
